@@ -144,7 +144,7 @@ class DownloadManager(WebManager):
         if download_queue:
             for item in download_queue:
                 self.queue.put(item)
-        threading.Thread(target=self.downloader).start()
+        threading.Thread(target=self.downloader, daemon=True).start()
 
     def download(self, url: str):
         self.queue.put(url)
@@ -152,8 +152,7 @@ class DownloadManager(WebManager):
 
     def downloader(self):
         while True:
-            url = self.queue.get()
-            self.current_tab.goto(url).download()
+            self.current_tab.goto(self.queue.get()).download()
             data["download_queue"] = list(self.queue.queue)
 
 
@@ -189,17 +188,29 @@ def page_iterator(tags: tuple) -> dict:
         data['cache'][tags] = {}
         data['cache'][tags]['searched'] = False
         data['cache'][tags]['cache'] = []
-    for page in itertools.count():
-        response = browser.get_json(
-            f'{url_base}{urllib.parse.urlencode({"limit": num, "tags": " ".join(tags), "page": page})}'
-        )
+    for page in itertools.count(1):
+        url = f'{url_base}{urllib.parse.urlencode({"limit": num, "tags": " ".join(tags), "page": page})}'
+        print(url)
+        response = browser.get_json(url)
         if not response:
             return
-        for image in response:
-            if image['id'] in data['cache'][tags]['cache']:
-                if data['cache'][tags]['searched']:
-                    return
-                continue
+        for image in filter(
+            lambda a: a['id'] not in itertools.chain(
+                local_files,
+                data['disliked_ids'],
+                map(
+                    lambda b: int(
+                        urllib.parse.unquote(
+                            b.split('/')[-1]
+                        ).split(' ')[1]
+                    ),
+                    downloader.queue.queue
+                )
+            ),
+            response
+        ):
+            if image['id'] in data['cache'][tags]['cache'] and data['cache'][tags]['searched']:
+                return
             yield image
             data['cache'][tags]['cache'].append(image['id'])
         if len(response) < num:
@@ -233,13 +244,7 @@ def main():
                 print('\n'.join(tags), '\n')
                 tags_old = tags
 
-            for response in filter(
-                    lambda a: a['id'] not in itertools.chain(
-                        local_files,
-                        data['disliked_ids']
-                    ),
-                    page_iterator(tags)
-            ):  # get responses
+            for response in page_iterator(tags):  # get responses
                 browser.explorer.get(response['sample_url'])
                 response_tags = response['tags'].split(' ')
                 for tag in response_tags:
@@ -266,12 +271,20 @@ def main():
                     dislike_times += 1
 
                 data.save()
-                if get_sorted_tags() != sorted_tags or tag_num != data['tag_num']:
+                if not list(tags) in map(
+                    lambda a: (
+                        sorted_tags := get_sorted_tags()
+                    )[a:a + tag_num],
+                    range(
+                        len(sorted_tags) - tag_num
+                    )
+                ) or tag_num != data['tag_num']:
                     reset = True
                     break
             else:
                 completed_tags.append(tags)
             if reset:
+                reset = False
                 break
         else:
             if data['tag_num'] > 0:
