@@ -19,10 +19,8 @@ def error_handler(func):
             try:
                 return func(*args, *kwargs)
             except Exception as error:
-                error = error
                 continue
-        else:
-            raise error
+        raise error
 
     return decorated
 
