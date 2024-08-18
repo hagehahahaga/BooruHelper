@@ -149,6 +149,7 @@ class DownloadManager(WebManager):
     def download(self, url: str):
         self.queue.put(url)
         data["download_queue"] = list(self.queue.queue)
+        data.save()
 
     def downloader(self):
         while True:
